@@ -574,7 +574,148 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
 }
 </style>
 
+
+
+<!-- 4) STANDALONE SITE HEADER: title left, contact right -->
+<style>
+@font-face {
+  font-family: 'MainTitle';
+  src: url('https://cdn.jsdelivr.net/gh/luca-henry/portfolio-assets@main/fonts/MainTitle') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+#site-header {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  right: 24px;
+  z-index: 2147482001;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  pointer-events: none;
+  color: #e91b40;
+}
+
+#site-title,
+#site-contact,
+#site-contact-panel {
+  font-family: 'MainTitle', sans-serif;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+#site-title {
+  display: block;
+  margin: 0;
+  padding: 0;
+  color: #e91b40;
+  font-size: 15pt;
+  line-height: 1;
+  text-decoration: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#site-contact-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+
+#site-contact {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: #e91b40;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  text-align: right;
+}
+#site-contact:hover { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+#site-contact[aria-expanded="true"] {
+  padding: 3px;
+  margin: -3px;
+  background: #e91b40;
+  color: #f0f0f2;
+  text-decoration: none;
+}
+#site-contact:focus-visible,
+#site-contact-panel a:focus-visible {
+  outline: 2px solid #e91b40;
+  outline-offset: 3px;
+}
+
+#site-contact-panel {
+  --contact-bleed: 12px;
+  position: absolute;
+  top: calc(100% + 14px);
+  right: 0;
+  box-sizing: border-box;
+  min-width: 12em;
+  max-width: 90vw;
+  padding: 10px;
+  background: #f0f0f2;
+  color: #e91b40;
+  border: 3px solid #e91b40;
+  border-radius: 0;
+  box-shadow: 6px 6px 0 #e91b40;
+  transform: rotate(-1deg);
+  transform-origin: top right;
+  clip-path: inset(0 calc(-1 * var(--contact-bleed)) 100% calc(-1 * var(--contact-bleed)));
+  visibility: hidden;
+  transition: clip-path 300ms steps(6), visibility 0s linear 300ms;
+}
+#site-contact-panel.open {
+  clip-path: inset(calc(-1 * var(--contact-bleed)));
+  visibility: visible;
+  transition: clip-path 300ms steps(6), visibility 0s;
+}
+#site-contact-panel a {
+  display: flex;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 6px 10px;
+  color: #e91b40;
+  font-size: 16px;
+  line-height: 1.1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+#site-contact-panel a:hover,
+#site-contact-panel a:focus-visible {
+  background: #e91b40;
+  color: #f0f0f2;
+  outline-offset: -3px;
+}
+@media (max-width: 600px) {
+  #site-header { top: 16px; left: 16px; right: 16px; gap: 12px; }
+  #site-title { font-size: 13pt; }
+  #site-contact { font-size: 17px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #site-contact-panel, #site-contact-panel.open { transition: none; }
+}
+</style>
+
 <div id="stage"><div id="title"></div><div id="cards"></div><canvas id="fx"></canvas></div>
+
+<header id="site-header" aria-label="Site header">
+  <div id="site-title">luca henry</div>
+  <div id="site-contact-wrap">
+    <button id="site-contact" type="button" aria-expanded="false" aria-controls="site-contact-panel">contact</button>
+    <nav id="site-contact-panel" aria-hidden="true" aria-label="Contact links"></nav>
+  </div>
+</header>
 
 <script>
 (function () {
@@ -1746,9 +1887,50 @@ function tidyUp() {
 })();
 </script>
 
+<!-- 5) CONTACT MENU -->
+<script>
+(function () {
+  'use strict';
+  const root = document.getElementById('site-contact-wrap');
+  const button = document.getElementById('site-contact');
+  const panel = document.getElementById('site-contact-panel');
+  if (!root || !button || !panel || window.__siteContactReady) return;
+  window.__siteContactReady = true;
 
+  const CONTACTS = [
+    { label: 'email', href: 'mailto:luca.henry21@gmail.com', icon: '@' },
+    { label: 'instagram', href: 'https://instagram.com/hfash_', icon: '↗' },
+    { label: 'linkedin', href: 'https://www.linkedin.com/in/luca-henry-4aa3ab206/', icon: '↗' }
+  ];
 
+  CONTACTS.forEach(contact => {
+    const link = document.createElement('a');
+    link.href = contact.href;
+    link.textContent = contact.label;
+    const icon = document.createElement('span');
+    icon.textContent = contact.icon;
+    icon.setAttribute('aria-hidden', 'true');
+    link.appendChild(icon);
+    if (!/^mailto:/i.test(contact.href)) {
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    }
+    panel.appendChild(link);
+  });
 
+  function setOpen(open) {
+    panel.classList.toggle('open', open);
+    button.setAttribute('aria-expanded', String(open));
+    panel.setAttribute('aria-hidden', String(!open));
+  }
 
-
+  button.addEventListener('click', () => setOpen(button.getAttribute('aria-expanded') !== 'true'));
+  document.addEventListener('pointerdown', event => {
+    if (!root.contains(event.target)) setOpen(false);
+  });
+  window.addEventListener('keydown', event => {
+    if (event.key === 'Escape') setOpen(false);
+  });
+})();
+</script>
 
