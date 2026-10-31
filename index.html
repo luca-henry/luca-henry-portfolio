@@ -511,15 +511,19 @@ html.cc-dark :is(img, video, [style*="background-image"]):not(#cc *):not(#ls *) 
 .pj .pj-body.in { opacity: 1; }
 .pj .pj-side, .pj .pj-media { min-height: 0; overflow-x: hidden; overflow-y: auto; box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--pj-ink) transparent; }
 .pj .pj-side { padding: 24px 10px 28px 24px; display: flex; flex-direction: column; gap: 16px; }
-.pj .pj-media { padding: 58px 24px 28px 14px; display: flex; flex-direction: column; gap: 22px; }
+.pj .pj-media { padding: 58px 24px 28px 14px; display: grid; grid-template-columns: repeat(var(--media-cols, 2), minmax(0, 1fr)); grid-template-rows: repeat(var(--media-rows, 1), minmax(0, 1fr)); gap: 16px; overflow: hidden; }
 .pj .pj-t { margin: 0; font-weight: normal; line-height: var(--tl, .95); word-break: break-word; font-size: calc(clamp(30px, 5.2cqw, 76px) * var(--ts, 1)); }
 .pj .pj-s { margin: 0; line-height: 1.1; opacity: .85; font-size: calc(clamp(15px, 1.9cqw, 24px) * var(--ss, 1)); }
 .pj .pj-sec { border: 3px solid var(--pj-ink); box-shadow: 4px 4px 0 var(--pj-ink); padding: 14px 14px 6px; }
 .pj .pj-sh { display: inline-block; margin: 0 0 10px; padding: 3px 8px; background: var(--pj-ink); color: var(--pj-bg); line-height: 1.1; font-size: calc(clamp(12px, 1.3cqw, 16px) * var(--ss, 1)); }
 .pj .pj-i { line-height: 1.45; font-size: calc(clamp(13px, 1.3cqw, 17px) * var(--is, 1)); }
 .pj .pj-i p { margin: 0 0 1em; }
-.pj .pj-m { position: relative; border: 3px solid var(--pj-ink); box-shadow: 6px 6px 0 var(--pj-ink); background: #ddd; cursor: pointer; flex: none; }
-.pj .pj-m img { display: block; width: 100%; height: auto; -webkit-user-drag: none; user-select: none; }
+.pj .pj-m { position: relative; display: flex; align-self: stretch; align-items: center; justify-content: center; min-width: 0; min-height: 0; width: 100%; height: 100%; box-sizing: border-box; overflow: hidden; border: 3px solid var(--pj-ink); box-shadow: 6px 6px 0 var(--pj-ink); background: #ddd; cursor: pointer; }
+.pj .pj-m img { display: block; width: 100%; max-width: none; height: 100%; object-fit: contain; -webkit-user-drag: none; user-select: none; }
+.pj .pj-m video { display: block; width: 100%; height: 100%; max-height: none; object-fit: contain; background: #111; }
+.pj .pj-pdf-viewer { display: flex; flex-direction: column; gap: 10px; width: 100%; height: 100%; min-height: 0; overflow: auto; background: #fff; }
+.pj .pj-pdf-page { display: block; width: 100%; height: auto; flex: none; margin: 0; background: #fff; }
+.pj .pj-pdf-loading { padding: 18px; color: #222; font: 14px/1.4 sans-serif; }
 .pj .pj-m.bk { border: 0; box-shadow: none; background: none; cursor: default; height: clamp(340px, 44cqw, 720px); touch-action: none; }
 .pj .pj-m.bk canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .pj .pj-navrow { display: flex; gap: 10px; margin-top: auto; padding-top: 6px; }
@@ -534,7 +538,7 @@ html.cc-dark :is(img, video, [style*="background-image"]):not(#cc *):not(#ls *) 
   .pj .pj-body { grid-template-columns: 1fr; overflow-y: auto; }
   .pj .pj-side, .pj .pj-media { overflow: visible; }
   .pj .pj-side { padding: 56px 24px 0; }
-  .pj .pj-media { padding: 22px 24px 28px; }
+  .pj .pj-media { padding: 22px 24px 28px; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; grid-auto-rows: minmax(180px, 42vw); overflow: visible; }
 }
 .pj .pj-x { position: absolute; top: 12px; right: 12px; z-index: 2; font: inherit; font-size: 15px; line-height: 1; color: var(--pj-ink); background: var(--pj-bg); border: 3px solid var(--pj-ink); box-shadow: 4px 4px 0 var(--pj-ink); padding: 5px 10px; cursor: pointer; opacity: 0; transition: opacity .3s; }
 .pj .pj-x.in { opacity: 1; }
@@ -718,6 +722,7 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
   </div>
 </header>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 (function () {
   'use strict';
@@ -889,6 +894,7 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
 
   // floating cards
   const CARD_SIZE = 190;
+  const CARD_SCALE = 1;                    // overall floating card scale: 1 = current size, 1.2 = 20% larger, 0.8 = 20% smaller
   const CARD_RATIO = 1.25;
   const FLOAT = 0.04;                        // how much cards move by themselves (0 = still)
   const TILT = 7;                            // cards lean toward the cursor, up to this many degrees (0 = off)
@@ -1338,6 +1344,36 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
     fit(); update();
     return { go, destroy() { dead = true; cancelAnimationFrame(raf); if (ro) ro.disconnect(); else removeEventListener('resize', fit); } };
   }
+  async function renderProjectPdf(container, url) {
+    const label = mk('div', 'pj-pdf-loading');
+    label.textContent = 'Loading PDF…';
+    container.appendChild(label);
+    try {
+      if (!window.pdfjsLib) throw new Error('PDF viewer library did not load');
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const doc = await window.pdfjsLib.getDocument({ url }).promise;
+      label.remove();
+      for (let pageNo = 1; pageNo <= doc.numPages; pageNo++) {
+        const page = await doc.getPage(pageNo);
+        const base = page.getViewport({ scale: 1 });
+        const width = Math.max(1, container.clientWidth);
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const viewport = page.getViewport({ scale: width / base.width });
+        const canvas = mk('canvas', 'pj-pdf-page');
+        canvas.width = Math.round(viewport.width * dpr);
+        canvas.height = Math.round(viewport.height * dpr);
+        canvas.style.width = '100%';
+        canvas.style.height = 'auto';
+        container.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: (width / base.width) * dpr }) }).promise;
+      }
+    } catch (err) {
+      label.textContent = 'This PDF could not be displayed. Check that the PDF file is publicly accessible and the filename is correct.';
+      label.title = String(err && err.message || err);
+    }
+  }
+
   function openProject(c) {
     if (!c.p) return;
     closeProject(true);
@@ -1346,13 +1382,21 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
     root.style.setProperty('--ts', p.titleSize || 1); root.style.setProperty('--tl', p.titleLineHeight || .95); root.style.setProperty('--ss', p.subheadingSize || 1); root.style.setProperty('--is', p.bodySize || 1);
     root.style.fontFamily = GENERIC.test(primary) ? primary : "'" + primary + "',sans-serif";
     cover.style.backgroundColor = c.col; if (c.url) cover.style.backgroundImage = 'url("' + c.url + '")';
-    const items = (p.media || p.photos || [p.image]).filter(Boolean).map(m => typeof m === 'string' ? { img: m } : m);
-    const imgs = items.filter(m => m.img).map(m => m.img);
+    // Accept image, video and PDF files in the same photos/media array.
+    const items = (p.media || p.photos || [p.image]).filter(Boolean).map(m => {
+      if (typeof m !== 'string') return m;
+      const clean = m.split(/[?#]/)[0], ext = clean.split('.').pop().toLowerCase();
+      if (/^(mp4|webm|mov|m4v|ogv)$/.test(ext)) return { video: m };
+      if (ext === 'pdf') return { pdf: m };
+      return { img: m };
+    });
+    const imgs = items.filter(m => m.img && !m.booklet).map(m => m.img);
     const lbEl = mk('div', 'lb'), lbImg = mk('img', 'lb-img'), lbX = mk('button', 'lb-b lb-x'), lbP = mk('button', 'lb-b lb-p'), lbN = mk('button', 'lb-b lb-nx'), lbC = mk('div', 'lb-c');
     lbX.type = lbP.type = lbN.type = 'button'; lbX.textContent = 'close ✕'; lbP.textContent = '‹'; lbN.textContent = '›'; lbImg.draggable = false; lbImg.alt = '';
     lbEl.appendChild(lbImg); lbEl.appendChild(lbX); if (imgs.length > 1) { lbEl.appendChild(lbP); lbEl.appendChild(lbN); lbEl.appendChild(lbC); }
     const LB = { open: false, i: 0 };
     const showLb = i => {
+      if (!imgs.length) return;
       LB.i = (i + imgs.length) % imgs.length; lbImg.classList.add('swap');
       setTimeout(() => { lbImg.src = imgUrl(imgs[LB.i]); lbImg.classList.remove('swap'); lbC.textContent = (LB.i + 1) + ' / ' + imgs.length; }, LB.open ? 90 : 0);
       if (imgs.length > 1) new Image().src = imgUrl(imgs[(LB.i + 1) % imgs.length]);
@@ -1370,14 +1414,44 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
     root.__lb = LB; root.__books = [];
     items.forEach((m, i) => {
       const w = mk('div', m.booklet ? 'pj-m bk' : 'pj-m');
-      if (m.booklet) w.__book = m.booklet;
-      else {
+      if (m.booklet) {
+        w.__book = m.booklet;
+      } else if (m.video) {
+        const video = mk('video', 'pj-video');
+        video.controls = false; video.autoplay = true; video.muted = true; video.loop = true;
+        video.playsInline = true; video.preload = 'auto';
+        video.setAttribute('autoplay', ''); video.setAttribute('muted', ''); video.setAttribute('loop', '');
+        video.src = imgUrl(m.video);
+        video.setAttribute('aria-label', (p.title || 'Project') + ' video ' + (i + 1));
+        w.appendChild(video);
+      } else if (m.pdf) {
+        const pdf = mk('div', 'pj-pdf-viewer');
+        pdf.setAttribute('aria-label', (p.title || 'Project') + ' PDF ' + (i + 1));
+        pdf.__pdfUrl = imgUrl(m.pdf);
+        w.appendChild(pdf);
+      } else if (m.img) {
         const im = mk('img'); im.alt = (p.title || '') + ' ' + (i + 1); im.draggable = false; im.decoding = 'async';
         im.style.backgroundColor = PLACEHOLDERS[(i + 1) % PLACEHOLDERS.length]; im.src = imgUrl(m.img); w.appendChild(im);
         const k = imgs.indexOf(m.img); w.addEventListener('click', () => LB.show(k));
+      } else {
+        return;
       }
       media.appendChild(w);
     });
+    // Arrange project media as a compact modular grid so desktop projects fit without a long image scroll.
+    const fitMediaGrid = () => {
+      const count = media.children.length;
+      if (!count) return;
+      const width = media.clientWidth || root.clientWidth * .66;
+      const height = media.clientHeight || root.clientHeight;
+      const usableW = Math.max(1, width - 40), usableH = Math.max(1, height - 86);
+      const aspect = usableW / usableH;
+      const cols = Math.max(1, Math.min(count, Math.ceil(Math.sqrt(count * aspect))));
+      const rows = Math.ceil(count / cols);
+      media.style.setProperty('--media-cols', cols);
+      media.style.setProperty('--media-rows', rows);
+    };
+    root.__fitMediaGrid = fitMediaGrid;
     const t = mk('h2', 'pj-t'), s2 = mk('p', 'pj-s'), x = mk('button', 'pj-x'), bodyPs = [];
     t.textContent = p.title || ''; s2.textContent = p.type || '';
     t.style.fontFamily = fontFor(p.titleFont); s2.style.fontFamily = fontFor(p.subheadingFont);
@@ -1403,7 +1477,10 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
     pj = root; pjC = c;
     pjT = setTimeout(() => {
       body.style.display = 'grid'; void body.offsetWidth; body.classList.add('in'); x.classList.add('in'); cover.style.opacity = 0;
+      requestAnimationFrame(() => { root.__fitMediaGrid(); });
+      if (window.ResizeObserver) { root.__mediaResizeObserver = new ResizeObserver(() => root.__fitMediaGrid()); root.__mediaResizeObserver.observe(media); }
       [].forEach.call(media.querySelectorAll('.bk'), w => root.__books.push(createBook(w, pageList(w.__book))));
+      [].forEach.call(media.querySelectorAll('.pj-pdf-viewer'), viewer => renderProjectPdf(viewer, viewer.__pdfUrl));
       t.style.minHeight = t.offsetHeight + 'px'; s2.style.minHeight = s2.offsetHeight + 'px';
       bodyPs.forEach(q => { q.style.minHeight = q.offsetHeight + 'px'; });
       if (p.title) glitchText(t, p.title, TITLE_SWAP_MS);
@@ -1537,7 +1614,7 @@ function tidyUp() {
 }
   function sizeCard(c) {
     const k = clamp(Math.min(W, H * 1.4) / 900, .3, 1.6);
-    c.w = c.bw * k; c.ih = c.w * c.ratio; c.h = c.ih + Math.max(20, CAP * k);
+    c.w = c.bw * k * CARD_SCALE; c.ih = c.w * c.ratio; c.h = c.ih + Math.max(20, CAP * k * CARD_SCALE);
     c.el.style.width = c.w + 'px'; c.im.style.height = c.ih + 'px';
     c.capEl.style.fontSize = Math.max(9, 13 * k) + 'px'; c.capEl.style.marginTop = 6 * k + 'px';
     c.m = c.w * c.h;
