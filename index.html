@@ -126,9 +126,6 @@
 
 <!-- 2) PULL-CORD LIGHT SWITCH -->
 <style>
-html.cc-dark { filter: invert(1) hue-rotate(180deg); }
-html.cc-dark :is(img, video, [style*="background-image"]):not(#cc *):not(#ls *) { filter: invert(1) hue-rotate(180deg); }
-
 #ls { position: fixed; top: 0; left: 0; z-index: 2147483000; pointer-events: none; user-select: none; -webkit-user-select: none; }
 #ls canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 #ls-h { position: absolute; left: 0; top: 0; box-sizing: border-box; width: 20px; height: 40px; margin: 0 0 0 -10px; padding: 0;
@@ -157,13 +154,17 @@ html.cc-dark :is(img, video, [style*="background-image"]):not(#cc *):not(#ls *) 
   const GRAVITY = 0.4;
   const DAMPING = 0.992;
   const SEGMENTS = 12;
-  const STORE = 'cc-dark';
+  const STORE = 'cc-random-visual-filter';
   /* ------------------------------- */
 
   const root = document.documentElement;
-  let dark = false;
-  try { dark = localStorage.getItem(STORE) === '1'; } catch (_) {}
-  root.classList.toggle('cc-dark', dark);
+  // The visual effects themselves live in the VISUAL FILTER ENGINE (window.__vfx) further down the page.
+  let activeFilter = null;
+  let lastFilterId = '';
+  let overlay = null;
+  // Clear the previous binary dark-mode state and any old saved filter.
+  root.classList.remove('cc-dark');
+  try { localStorage.removeItem('cc-dark'); localStorage.removeItem(STORE); } catch (_) {}
 
   const R = LENGTH + MAX_PULL, N = SEGMENTS, W = Math.ceil(2 * R + 60), H = Math.ceil(R + 60);
   const VMAX = 22, FOLLOW = 30;
@@ -182,7 +183,7 @@ html.cc-dark :is(img, video, [style*="background-image"]):not(#cc *):not(#ls *) 
     cv = document.createElement('canvas'); box.appendChild(cv);
     h = document.createElement('button');
     h.id = 'ls-h'; h.type = 'button'; h.setAttribute('data-cursor', 'grab');
-    h.setAttribute('aria-label', 'Toggle dark mode');
+    h.setAttribute('aria-label', 'Toggle random visual filter');
     box.style.setProperty('--ls-ink', INK); box.style.setProperty('--ls-paper', PAPER);
     box.appendChild(h);
     document.body.appendChild(box);
@@ -201,21 +202,35 @@ html.cc-dark :is(img, video, [style*="background-image"]):not(#cc *):not(#ls *) 
     draw();
   }
 
-  // ---------- mode ----------
-  function paint() { h.setAttribute('aria-pressed', dark); }
+  // ---------- random visual filter mode ----------
+  function paint() {
+    h.setAttribute('aria-pressed', !!activeFilter);
+    h.setAttribute('aria-label', activeFilter ? 'Turn off visual filter' : 'Apply a random visual filter');
+    h.title = activeFilter ? 'Turn off visual filter' : 'Apply a random visual filter';
+  }
   function broadcast() {
-    for (const f of document.getElementsByTagName('iframe')) { try { f.contentWindow.postMessage({ type: 'cc-theme', dark: dark }, '*'); } catch (_) {} }
+    for (const f of document.getElementsByTagName('iframe')) {
+      try {
+        f.contentWindow.postMessage({ type: 'cc-theme', dark: false }, '*');
+        f.contentWindow.postMessage({ type: 'cc-visual-filter', filter: activeFilter ? activeFilter.id : '' }, '*');
+      } catch (_) {}
+    }
   }
   function toggle() {
-    dark = !dark;
-    root.classList.toggle('cc-dark', dark);
+    const name = window.__vfx ? window.__vfx.toggle() : null;
+    activeFilter = name ? { id: name } : null;
+    if (name) lastFilterId = name;
     paint(); broadcast();
-    try { localStorage.setItem(STORE, dark ? '1' : '0'); } catch (_) {}
-    dispatchEvent(new CustomEvent('cc-theme', { detail: { dark: dark } }));
+    dispatchEvent(new CustomEvent('cc-theme', { detail: { dark: false, filter: name || '' } }));
   }
   addEventListener('load', broadcast);
   addEventListener('message', e => {
-    if (e.data && e.data.type === 'cc-hello') { try { e.source.postMessage({ type: 'cc-theme', dark: dark }, '*'); } catch (_) {} }
+    if (e.data && e.data.type === 'cc-hello') {
+      try {
+        e.source.postMessage({ type: 'cc-theme', dark: false }, '*');
+        e.source.postMessage({ type: 'cc-visual-filter', filter: activeFilter ? activeFilter.id : '' }, '*');
+      } catch (_) {}
+    }
   });
 
   // ---------- physics (Verlet rope, only runs while moving) ----------
@@ -304,7 +319,6 @@ html.cc-dark :is(img, video, [style*="background-image"]):not(#cc *):not(#ls *) 
       if (e.pointerType === 'mouse' && e.buttons === 0) { up(e); return; }
       aim(e); moved = Math.max(moved, Math.hypot(e.clientX - sx, e.clientY - sy));
       if (!fired && pull >= TRIGGER) { fired = didFire = true; toggle(); }
-      else if (fired && pull < TRIGGER * .5) fired = false;
       start();
     });
     const up = e => {
@@ -319,6 +333,174 @@ html.cc-dark :is(img, video, [style*="background-image"]):not(#cc *):not(#ls *) 
     addEventListener('blur', up);
     h.addEventListener('click', e => { if (e.detail === 0) tug(); });
   }
+})();
+</script>
+
+<!-- 2b) VISUAL FILTER ENGINE -->
+<script>
+(function () {
+  'use strict';
+  if (window.__vfx) return;
+  const R = (a, b) => a + Math.random() * (b - a), RI = (a, b) => Math.floor(R(a, b + 1)), pick = a => a[Math.floor(Math.random() * a.length)];
+  /* Media that gets the real image processing (SVG filter). Text/UI are themed via CSS + overlay instead. */
+  const SEL = '.card .im,.card canvas,.pj-cover,.pj-m img,.pj-m video,.pj-m canvas,.pj-pdf-page,.lb-img';
+  const TXT = '#site-header,.pj-side,.card .cap,#title';
+  const shadow = (a, b, d) => TXT + '{text-shadow:' + (-d) + 'px 0 ' + a + ',' + d + 'px 0 ' + b + '}';
+
+  /* ---------- tiny SVG-filter helpers ---------- */
+  const hx = h => [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16) / 255);
+  const cm = (v, i, r) => '<feColorMatrix' + (i ? ' in="' + i + '"' : '') + ' values="' + v + '"' + (r ? ' result="' + r + '"' : '') + '/>';
+  const lum = (k, c) => (.2126 * k) + ' ' + (.7152 * k) + ' ' + (.0722 * k) + ' 0 ' + c;
+  const gray = (k, src) => { const r = lum(k, .5 - .5 * k); return cm(r + ' ' + r + ' ' + r + ' 0 0 0 1 0', src); };
+  const lin = (s, i, a) => '<feComponentTransfer' + (a || '') + '>' + ['R', 'G', 'B'].map(c => '<feFunc' + c + ' type="linear" slope="' + s + '" intercept="' + (i || 0) + '"/>').join('') + '</feComponentTransfer>';
+  const post = n => { const t = Array.from({ length: n }, (_, i) => (i / (n - 1)).toFixed(2)).join(' '); return '<feComponentTransfer>' + ['R', 'G', 'B'].map(c => '<feFunc' + c + ' type="discrete" tableValues="' + t + '"/>').join('') + '</feComponentTransfer>'; };
+  const gmap = (s, d, k) => {
+    const c = s.map(hx), t = i => c.map(x => x[i].toFixed(3)).join(' '), ty = d ? 'discrete' : 'table';
+    return gray(k || 1) + '<feComponentTransfer><feFuncR type="' + ty + '" tableValues="' + t(0) + '"/><feFuncG type="' + ty + '" tableValues="' + t(1) + '"/><feFuncB type="' + ty + '" tableValues="' + t(2) + '"/></feComponentTransfer>';
+  };
+  const CH = ['1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0', '0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0', '0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0'];
+  const split = (o, src) => CH.map((m, i) => cm(m, src || 'SourceGraphic') + '<feOffset dx="' + o[i][0].toFixed(1) + '" dy="' + o[i][1].toFixed(1) + '" result="s' + i + '"/>').join('') +
+    '<feBlend in="s0" in2="s1" mode="screen" result="sx"/><feBlend in="sx" in2="s2" mode="screen" result="rgb"/>';
+  /* pixelate: sample one point per P x P block, then grow it (P must be even, >= 4) */
+  const pix = (P, t, src, res) => { const r = P / 2 - 1; return '<feFlood x="' + r + '" y="' + r + '" width="2" height="2" result="fl' + t + '"/><feComposite in="fl' + t + '" in2="fl' + t + '" width="' + P + '" height="' + P + '" result="tl' + t + '"/><feTile in="tl' + t + '" result="pt' + t + '"/><feComposite in="' + src + '" in2="pt' + t + '" operator="in"/><feMorphology operator="dilate" radius="' + r + '"' + (res ? ' result="' + res + '"' : '') + '/>'; };
+  const turb = (f, oct, res) => '<feTurbulence type="fractalNoise" baseFrequency="' + f + '" numOctaves="' + oct + '" seed="' + RI(1, 999) + '" result="tb' + res + '"/>' + cm('1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 0 1', 'tb' + res, res);
+  /* horizontal tearing: noise that only varies by row, quantised so whole bands slip sideways */
+  const bands = (fy, sc, res) => '<feTurbulence type="fractalNoise" baseFrequency="0 ' + fy + '" numOctaves="1" seed="' + RI(1, 999) + '" result="bn"/><feComponentTransfer in="bn" result="bq"><feFuncR type="discrete" tableValues="' + Array.from({ length: 12 }, () => Math.random() < .6 ? '.5' : Math.random().toFixed(2)).join(' ') + '"/></feComponentTransfer><feDisplacementMap in="SourceGraphic" in2="bq" scale="' + sc + '" xChannelSelector="R" yChannelSelector="A" result="' + res + '"/>';
+
+  /* ---------- halftone / dither screens: dot patterns are generated once as tiny canvases ---------- */
+  const cache = {};
+  function patURL(S, mode, sc) {
+    const key = S + mode + sc; if (cache[key]) return cache[key];
+    const n = Math.max(2, Math.round(S * sc)), c = document.createElement('canvas'); c.width = c.height = n;
+    const x = c.getContext('2d'), im = x.createImageData(n, n), d = im.data;
+    const P = { sq: [[.5, .5]], dia: [[.5, 0], [0, .5]] }[mode], M = { sq: .7071, dia: .5 }[mode];
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const u = (i + .5) / n, v = (j + .5) / n; let t;
+      if (P) { t = 9; for (const p of P) for (let a = -1; a < 2; a++) for (let b = -1; b < 2; b++) t = Math.min(t, Math.hypot(u - p[0] - a, v - p[1] - b)); t = 1 - t / M; }
+      else if (mode === 'h1') t = 1 - Math.abs(((u + v) * 2 % 1) - .5) * 2;
+      else if (mode === 'h2') t = 1 - Math.abs(((u - v + 1) * 2 % 1) - .5) * 2;
+      else if (mode === 'scan') t = 1 - .62 * Math.pow(.5 - .5 * Math.cos(2 * Math.PI * v), 1.6);
+      else t = Math.random();
+      const k = (j * n + i) * 4; d[k] = d[k + 1] = d[k + 2] = t * 255; d[k + 3] = 255;
+    }
+    x.putImageData(im, 0, 0);
+    return (cache[key] = c.toDataURL('image/png'));
+  }
+  const pat = (n, S, mode, sc, W) => { const u = patURL(S, mode, sc || Math.ceil(30 / S)); W = W || S; return '<feImage href="' + u + '" xlink:href="' + u + '" x="0" y="0" width="' + W + '" height="' + W + '" result="p' + n + '"/><feTile in="p' + n + '" result="t' + n + '"/>'; };
+  /* one ink plate: amount a (matrix row) is compared with the dot screen, so dot SIZE carries the tone */
+  const ink = (n, a, t, col, o, gain, light) => {
+    const c = hx(col), r = c[0], g = c[1], b = c[2];
+    return cm(a + ' ' + a + ' ' + a + ' 0 0 0 1 0', 'SourceGraphic') + '<feComposite in2="' + t + '" operator="arithmetic" k2="1" k3="1" k4="-1"/>' + lin(gain) +
+      cm(light ? r + ' 0 0 0 0 ' + g + ' 0 0 0 0 ' + b + ' 0 0 0 0 0 0 0 0 1' : -(1 - r) + ' 0 0 0 1 ' + -(1 - g) + ' 0 0 0 1 ' + -(1 - b) + ' 0 0 0 1 0 0 0 0 1') +
+      '<feOffset dx="' + o[0] + '" dy="' + o[1] + '" result="o' + n + '"/>';
+  };
+  const mix = (names, base, mode) => { let p = '<feFlood flood-color="' + base + '" result="pp"/>', cur = 'pp'; names.forEach((n, i) => { p += '<feBlend in="' + cur + '" in2="' + n + '" mode="' + (mode || 'multiply') + '" result="m' + i + '"/>'; cur = 'm' + i; }); return p + '<feComposite in="' + cur + '" in2="SourceAlpha" operator="in"/>'; };
+  const jit = m => [R(-m, m).toFixed(1), R(-m, m).toFixed(1)];
+
+  /* ---------- overlays (static, pointer-events none) ---------- */
+  const V = (css, html) => ({ css: css || '', html: html || '' });
+  const grain = (op, seed, bm) => 'background-image:url("data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' seed='" + seed + "'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%' height='100%' filter='url(#n)'/></svg>") + '");opacity:' + op + ';mix-blend-mode:' + bm;
+  const scan = op => 'background:repeating-linear-gradient(0deg,rgba(0,0,0,' + op + ') 0 1px,transparent 1px 3px),radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.55));mix-blend-mode:multiply';
+  const hud = () => {
+    let h = '<div style="position:absolute;left:18px;bottom:16px;font:12px monospace;color:#0ff">THERMAL · ' + RI(18, 30) + '–' + RI(70, 120) + '°C</div>';
+    const n = RI(2, 4);
+    for (let i = 0; i < n; i++) { const c = pick(['#0ff', '#ff0', '#0f6']); h += '<div style="position:absolute;left:' + R(8, 70) + '%;top:' + R(18, 70) + '%;width:' + R(8, 18) + '%;height:' + R(10, 22) + '%;border:2px solid ' + c + '"><span style="position:absolute;left:-2px;top:-17px;font:11px monospace;color:' + c + '">T' + (i + 1) + ' ' + R(30, 98).toFixed(1) + '°C</span></div>'; }
+    return h;
+  };
+
+  const PAL4 = [['#111111', '#e91b40', '#f7c600', '#f2eee2'], ['#0b1a4d', '#2457ff', '#ff9ad5', '#fff6e0'], ['#1b0a2e', '#7a2cf0', '#00d4a6', '#f4ff8a'], ['#000000', '#ff3b00', '#ffd400', '#ffffff']];
+  const DUO = [['#12003a', '#ff2bd6', '#c8ff00'], ['#00130d', '#00ff9d', '#ff3df0'], ['#2a00ff', '#ff5a1f', '#ffe600'], ['#1a0000', '#e0003a', '#fff0f5'], ['#001a66', '#3d7bff', '#ffb3ff']];
+  const RISO = [['#ff48b0', '#0078bf'], ['#ff6c2f', '#3255a4'], ['#00a95c', '#ff48b0'], ['#ffe800', '#ff48b0']];
+  const THERM = ['#000000', '#1d0a7a', '#6a00d8', '#00c8ff', '#00d85a', '#ffe600', '#ff3a00', '#ffffff'];
+  const ELEC = ['#000000', '#1a00ff', '#00e5ff', '#a000ff', '#ff1744', '#ffe600'];
+
+  /* ---------- the effects: each call re-rolls its own random parameters ---------- */
+  const E = {
+    cmyk() { const S = RI(7, 12), k = 1.8, c = (.5 * k + .5).toFixed(2), m = R(2, 6);
+      return { f: pat('c', S, 'sq') + pat('m', S, 'dia') + pat('y', S + 1, 'sq') + pat('k', S, 'dia') +
+        ink('c', -k + ' 0 0 0 ' + c, 'tc', '#00aeef', jit(m), R(14, 30)) + ink('m', '0 ' + -k + ' 0 0 ' + c, 'tm', '#ec008c', jit(m), R(14, 30)) +
+        ink('y', '0 0 ' + -k + ' 0 ' + c, 'ty', '#ffed00', jit(m), R(14, 30)) + ink('k', lum(-2.1, 1.2), 'tk', '#14110f', jit(2), R(14, 30)) +
+        mix(['oc', 'om', 'oy', 'ok'], '#fffdf4'), bg: '#f4f0e6', ink: '#ec008c', ov: [V(grain(.35, RI(1, 99), 'multiply'))] }; },
+    rgbht() { const S = RI(6, 10), k = 1.5, b = (.5 - .5 * k).toFixed(2);
+      return { f: pat('r', S, 'sq') + pat('g', S, 'dia') + pat('b', S + 1, 'sq') +
+        ink('r', k + ' 0 0 0 ' + b, 'tr', '#ff2d2d', jit(3), R(14, 28), 1) + ink('g', '0 ' + k + ' 0 0 ' + b, 'tg', '#2dff5a', jit(3), R(14, 28), 1) +
+        ink('b', '0 0 ' + k + ' 0 ' + b, 'tb', '#2d5bff', jit(3), R(14, 28), 1) + mix(['or', 'og', 'ob'], '#000', 'screen'), bg: '#050505', ink: '#ffffff' }; },
+    news() { const S = RI(4, 8);
+      return { f: pat('k', S, 'dia') + ink('k', lum(-R(1.5, 2.2), R(1, 1.25)), 'tk', '#111', [0, 0], R(10, 24)) + mix(['ok'], '#efe9d8'), bg: '#e9e3d0', ink: '#111', ov: [V(grain(.3, RI(1, 99), 'multiply'))] }; },
+    stoch() { const cell = RI(2, 4);
+      return { f: pat('k', 64, 'noise', 1, 64 * cell) + ink('k', lum(-R(1.6, 2.4), R(1, 1.3)), 'tk', '#000', [0, 0], R(6, 16)) + mix(['ok'], '#fff'), bg: '#f2f2f2', ink: '#000' }; },
+    riso() { const S = RI(4, 7), p = pick(RISO);
+      return { f: pat('a', S, 'dia') + pat('b', S + 1, 'sq') + ink('a', lum(-1.5, 1.2), 'ta', p[0], jit(5), R(10, 22)) + ink('b', '0 -1.5 0 0 1.1', 'tb', p[1], jit(5), R(10, 22)) + mix(['oa', 'ob'], '#f2ead8'), bg: '#efe6d2', ink: p[1], ov: [V(grain(.45, RI(1, 99), 'multiply'))] }; },
+    screen() { const p = pick(PAL4), d = jit(5);
+      return { f: gmap(p, true, R(1.2, 1.7)) + '<feOffset dx="0" dy="0" result="g"/><feOffset in="g" dx="' + d[0] + '" dy="' + d[1] + '" result="h"/><feBlend in="g" in2="h" mode="multiply"/>', bg: p[3], ink: p[1] }; },
+    copy() { const l = lum(1, 0);
+      return { f: '<feTurbulence type="fractalNoise" baseFrequency="' + R(.55, 1.1) + '" numOctaves="2" seed="' + RI(1, 999) + '" result="nz"/>' + cm(l + ' ' + l + ' ' + l + ' 0 0 0 0 1', 'nz', 'ng') + gray(R(2.5, 4), 'SourceGraphic') + '<feComposite in2="ng" operator="arithmetic" k2="1" k3=".7" k4="-.35"/>' + lin(7, -3), bg: '#f0f0ec', ink: '#000', ov: [V(grain(.5, RI(1, 99), 'multiply'))] }; },
+    hatch() { const S = RI(5, 9);
+      return { f: pat('a', S, 'h1') + pat('b', S + 2, 'h2') + ink('a', lum(-1.6, 1.15), 'ta', '#e91b40', jit(2), R(16, 30)) + ink('b', lum(-2.2, 1), 'tb', '#15151f', jit(2), R(16, 30)) + mix(['oa', 'ob'], '#f3ead2'), bg: '#f1e8d0', ink: '#15151f' }; },
+    crt() { const d = R(1.5, 4.5), S = RI(3, 5);
+      return { f: split([[-d, 0], [0, R(-1, 1)], [d, 0]]) + '<feGaussianBlur in="rgb" stdDeviation="' + R(3, 7) + '" result="gl"/>' + lin(1.6, 0, ' in="gl" result="gl2"') +
+        '<feBlend in="rgb" in2="gl2" mode="screen" result="lit"/>' + lin(1.25, -.06, ' in="lit" result="lit2"') + pat('s', S, 'scan', 6) + '<feBlend in="lit2" in2="ts" mode="multiply"/><feComposite in2="SourceAlpha" operator="in"/>',
+        bg: '#05060c', ink: '#7fd8ff', css: shadow('rgba(255,0,60,.7)', 'rgba(0,200,255,.7)', 1.5), ov: [V(scan(.4))] }; },
+    elec() { const S = RI(3, 5);
+      return { f: '<feTurbulence type="fractalNoise" baseFrequency="0.003 ' + R(.03, .12) + '" numOctaves="1" seed="' + RI(1, 99) + '" result="w"/><feDisplacementMap in="SourceGraphic" in2="w" scale="' + R(10, 30) + '" xChannelSelector="R" yChannelSelector="B"/>' +
+        gmap(ELEC, false, R(1.5, 2)) + '<feGaussianBlur stdDeviation="' + R(1.5, 4) + ' 0" result="e"/><feGaussianBlur in="e" stdDeviation="6" result="gl"/><feBlend in="e" in2="gl" mode="screen" result="lit"/>' +
+        pat('s', S, 'scan', 6) + '<feBlend in="lit" in2="ts" mode="multiply"/><feComposite in2="SourceAlpha" operator="in"/>', bg: '#02010a', ink: '#00e5ff', css: shadow('rgba(255,23,68,.8)', 'rgba(0,229,255,.8)', 2), ov: [V(scan(.5))] }; },
+    vhs() { const d = R(2, 6), y = () => R(5, 90);
+      const bars = [y(), y(), y()].map(v => 'linear-gradient(transparent ' + v + '%,rgba(255,255,255,.4) ' + v + '% ' + (v + .7) + '%,transparent ' + (v + .7) + '%)').join(',');
+      return { f: bands(R(.02, .05), R(30, 90), 'dis') + split([[-d, 0], [0, 0], [d * 1.2, 0]], 'dis') + '<feColorMatrix type="saturate" values="1.7"/>',
+        css: shadow('rgba(255,0,90,.6)', 'rgba(0,220,255,.6)', 2), ov: [V('background:' + bars + ';mix-blend-mode:screen'), V(grain(.25, RI(1, 99), 'screen'))] }; },
+    tear() { return { f: bands(R(.01, .04), R(100, 280), 'dis') + split([[R(-8, 0), 0], [0, 0], [R(0, 8), 0]], 'dis') + lin(1.15, -.05), css: shadow('rgba(255,0,90,.5)', 'rgba(0,220,255,.5)', 2) }; },
+    rgbsplit() { const a = R(8, 24);
+      return { f: split([[-a, R(-6, 6)], [R(-4, 4), R(-4, 4)], [a, R(-6, 6)]]) + '<feColorMatrix type="saturate" values="1.8"/>', css: shadow('rgba(255,0,60,.8)', 'rgba(0,200,255,.8)', a / 5) }; },
+    leak() { const x = R(0, 100), y = R(0, 100);
+      return { f: cm('1.15 .1 0 0 .02 .05 1 .05 0 0 0 .1 .85 0 0 0 0 0 1 0') + lin(1.15, -.06),
+        ov: [V('background:radial-gradient(ellipse at ' + x + '% ' + y + '%,rgba(255,70,10,.75),transparent 55%),radial-gradient(ellipse at ' + (100 - x) + '% ' + (100 - y) + '%,rgba(255,200,40,.5),transparent 50%),radial-gradient(ellipse at ' + R(0, 100) + '% ' + R(0, 100) + '%,rgba(0,120,255,.35),transparent 45%);mix-blend-mode:screen'), V(grain(.4, RI(1, 99), 'overlay'))] }; },
+    indexed() { return { f: pix(2 * RI(3, 6), 'x', 'SourceGraphic') + '<feColorMatrix type="saturate" values="1.6"/>' + post(RI(3, 4)) }; },
+    mosaic() { const B = 2 * RI(20, 44), thr = R(.42, .49), sc = R(70, 190);
+      return { f: turb(R(.004, .014), 2, 'n1') + pix(B, 'a', 'n1', 'bA') + turb(R(.004, .014), 2, 'n2') + pix(2 * RI(14, 40), 'b', 'n2', 'bB') +
+        '<feDisplacementMap in="SourceGraphic" in2="bA" scale="' + sc + '" xChannelSelector="R" yChannelSelector="G" result="dis"/>' + cm('0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 14 0 0 0 ' + (-14 * thr), 'bB', 'msk') +
+        '<feComposite in="dis" in2="msk" operator="in" result="d1"/><feDisplacementMap in="SourceGraphic" in2="bB" scale="' + sc * .6 + '" xChannelSelector="G" yChannelSelector="R" result="dis2"/>' +
+        '<feComponentTransfer in="dis2" result="g2"><feFuncA type="linear" slope=".5"/></feComponentTransfer><feComponentTransfer in="SourceGraphic" result="gh"><feFuncA type="linear" slope=".28"/></feComponentTransfer>' +
+        '<feMerge><feMergeNode in="gh"/><feMergeNode in="g2"/><feMergeNode in="d1"/></feMerge>' }; },
+    tilegl() { const B = 2 * RI(6, 16), s = () => pick(['R', 'G', 'B']);
+      return { f: turb(R(.01, .03), 2, 'n1') + pix(B, 'a', 'n1', 'bA') + CH.map((m, i) => cm(m, 'SourceGraphic') + '<feDisplacementMap in2="bA" scale="' + R(20, 90) + '" xChannelSelector="' + s() + '" yChannelSelector="' + s() + '" result="c' + i + '"/>').join('') +
+        '<feBlend in="c0" in2="c1" mode="screen" result="cx"/><feBlend in="cx" in2="c2" mode="screen"/>' }; },
+    psort() { const r = RI(25, 70), th = R(.45, .65), k = 14;
+      return { f: '<feMorphology in="SourceGraphic" operator="dilate" radius="' + r + ' 0" result="sm"/>' + cm('0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 ' + .2126 * k + ' ' + .7152 * k + ' ' + .0722 * k + ' 0 ' + (-k * th), 'SourceGraphic', 'mk') +
+        '<feComposite in="sm" in2="mk" operator="in" result="st"/><feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="st"/></feMerge><feColorMatrix type="saturate" values="1.5"/>' }; },
+    poster() { return { f: '<feColorMatrix type="saturate" values="2.4"/>' + lin(1.3, -.12) + post(RI(3, 5)) }; },
+    solar() { const T = ['0 1 0', '0 .9 .1 1', '1 .15 .85 0', '0 1 .2 .9 0'];
+      return { f: '<feComponentTransfer><feFuncR type="table" tableValues="' + pick(T) + '"/><feFuncG type="table" tableValues="' + pick(T) + '"/><feFuncB type="table" tableValues="' + pick(T) + '"/></feComponentTransfer><feColorMatrix type="saturate" values="1.8"/>' }; },
+    ir() { return { f: cm('0 1.3 0 0 .05 .5 0 .4 0 0 1.2 0 0 0 0 0 0 0 1 0') + '<feColorMatrix type="saturate" values="1.9"/>' + lin(1.2, -.08), ov: [V(grain(.35, RI(1, 99), 'overlay'))] }; },
+    thermal() { return { f: pix(2 * RI(2, 4), 't', 'SourceGraphic') + gmap(THERM, false, R(1.4, 1.9)), bg: '#06020c', ink: '#00e5ff', ov: [V('', hud())] }; },
+    blue() { return { f: gmap(['#f4f9ff', '#7fb0ff', '#1d56c8', '#0b3294'], false, 1.3), bg: '#0b3294', ink: '#e8f2ff',
+      ov: [V('background:linear-gradient(rgba(255,255,255,.2) 1px,transparent 1px) 0 0/28px 28px,linear-gradient(90deg,rgba(255,255,255,.2) 1px,transparent 1px) 0 0/28px 28px')] }; },
+    duo() { const p = pick(DUO); return { f: gmap(p, false, R(1.3, 2.2)), bg: p[0], ink: p[2] }; }
+  };
+
+  /* ---------- engine: add on pull 1, remove everything on pull 2 ---------- */
+  const NAMES = Object.keys(E); let on = null, last = '', count = 0, els = [];
+  function off() { els.forEach(e => e.remove()); els = []; on = null; }
+  function start() {
+    let name; do name = pick(NAMES); while (name === last && NAMES.length > 1);
+    last = name;
+    const e = E[name](), id = 'vfx-f' + (++count);
+    const holder = document.createElement('div');
+    holder.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="0" height="0" style="position:absolute;pointer-events:none" aria-hidden="true"><filter id="' + id + '" color-interpolation-filters="sRGB">' + e.f + '</filter></svg>';
+    const svg = holder.firstChild; document.body.appendChild(svg); els.push(svg);
+    const st = document.createElement('style');
+    st.textContent = SEL + '{filter:url(#' + id + ')!important}' +
+      (e.bg ? '#stage{background:' + e.bg + '!important}.pj{--pj-bg:' + e.bg + '!important}' : '') +
+      (e.ink ? '#site-title,#site-contact,#title .row,#menu,.card .cap{color:' + e.ink + '!important}.pj{--pj-ink:' + e.ink + '!important}' : '') + (e.css || '');
+    document.head.appendChild(st); els.push(st);
+    (e.ov || []).forEach(o => {
+      const d = document.createElement('div'); d.setAttribute('aria-hidden', 'true');
+      d.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147482000;' + o.css; d.innerHTML = o.html;
+      document.body.appendChild(d); els.push(d);
+    });
+    return name;
+  }
+  window.__vfx = { toggle() { if (on) { off(); return null; } on = start(); return on; }, effects: NAMES, _build: n => E[n]() };
 })();
 </script>
 
@@ -756,14 +938,14 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
       info: 
 'lorem ipsum dolor sit amet consectetur adipiscing elit dolor quibusdam nulla nulla eos eiusmod est quas occaecat omnis facere fuga libero velit cum harum quidem sint soluta quos est non nam ducimus labore et in rerum amet officia minus nostrud blanditiis aute qui dolor dolores sunt rerum et cillum iusto \n\nA blank line starts a new paragraph.'
 ,
-      image: 'NRSPPCover.png',
-      photos: ['NRSPPCover.png', 'NRSPPPoster.png', 'NRSPPBillboard.png','NRSPPTruck.png', 'NRSPPPublication.png', 'NRSPPPublication2.png'],
+      image: 'one.jpg',
+      photos: ['one.jpg', 'one-2.jpg', 'one-3.jpg'],
       titleFont: 'Damsterdam',
       subheadingFont: 'OTT_Buzz-Black-1',
       bodyFont: 'expressway rg',
     },
     {
-      title: 'Melbourne Cinémathèque',
+      title: 'Melbourne Cinémathèque',
       type: 'Advertising',
       info: 
 'lorem ipsum dolor sit amet consectetur adipiscing elit dolor quibusdam nulla nulla eos eiusmod est quas occaecat omnis facere fuga libero velit cum harum quidem sint soluta quos est non nam ducimus labore et in rerum amet officia minus nostrud blanditiis aute qui dolor dolores sunt rerum et cillum iusto \n\nA blank line starts a new paragraph.'
@@ -773,7 +955,7 @@ html.cc-dark .kon .card .im { animation-name: cardsplitd !important; }
       titleFont: 'PF Pixelscript Pro Regular',
       subheadingFont: 'ArgentPixelCF',
       bodyFont: 'Big Caslon Medium',
-      size: 150,
+      size: 240,
       titleSize: 0.25,
       titleLineHeight: 1.6
     },
@@ -2109,4 +2291,3 @@ function tidyUp() {
   });
 })();
 </script>
-
